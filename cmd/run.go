@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -76,6 +78,7 @@ Example:
   spark run ./tests --verbose
   spark run ./tests --debug
   spark run ./tests --configuration spark.yaml
+  spark run ./tests --cloud
   SPARK_CLOUD_URL=http://localhost:8080 spark run ./tests --cloud`,
 	Args:          cobra.MaximumNArgs(1),
 	SilenceUsage:  true, // Don't print usage on error - it's confusing in CI logs
@@ -95,7 +98,7 @@ func init() {
 	runCmd.Flags().BoolVar(&debugOutput, "debug", false, "Show docker commands (implies --verbose)")
 	runCmd.Flags().IntVar(&testTimeout, "timeout", 300, "Maximum time in seconds for each test execution")
 	runCmd.Flags().IntVar(&workerCount, "workers", 0, "Number of parallel test workers (0 = auto-detect from CPU count)")
-	runCmd.Flags().BoolVar(&cloudMode, "cloud", false, "Run tests on remote API server (requires SPARK_CLOUD_URL env var)")
+	runCmd.Flags().BoolVar(&cloudMode, "cloud", false, "Run tests on remote API server (default: https://spark-cloud.finie.io, override with SPARK_CLOUD_URL)")
 	runCmd.Flags().Float64Var(&cpuThreshold, "cpu-threshold", 0, "CPU load threshold (0.0-1.0) - pause test execution when exceeded (0 = disabled)")
 	runCmd.Flags().BoolVar(&teamcityOutput, "teamcity", false, "Output TeamCity service messages for IDE integration")
 	runCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output NDJSON for machine consumption")
@@ -251,7 +254,7 @@ func runTests(cmd *cobra.Command, args []string) error {
 	if cloudMode {
 		cloudURL := os.Getenv("SPARK_CLOUD_URL")
 		if cloudURL == "" {
-			return fmt.Errorf("--cloud requires SPARK_CLOUD_URL environment variable to be set")
+			cloudURL = "https://spark-cloud.finie.io"
 		}
 		err := runTestsCloud(cloudURL, tests, services, startTime)
 		telemetry.Wait(4 * time.Second)
@@ -415,9 +418,48 @@ func loadConfig() (*config.Config, error) {
 	return cfg, nil
 }
 
+// resolveCloudToken resolves the auth token for cloud mode.
+// Priority: SPARK_TOKEN env var > ~/.spark/auth.json > empty string.
+func resolveCloudToken(apiURL string) string {
+	// 1. Environment variable takes priority
+	if token := os.Getenv("SPARK_TOKEN"); token != "" {
+		return token
+	}
+
+	// 2. Try ./auth.json in current directory
+	data, err := os.ReadFile("auth.json")
+	if err != nil {
+		return ""
+	}
+
+	var authFile struct {
+		SparkToken map[string]string `json:"spark-token"`
+	}
+	if err := json.Unmarshal(data, &authFile); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: auth.json is not valid JSON, ignoring\n")
+		return ""
+	}
+
+	if authFile.SparkToken == nil {
+		return ""
+	}
+
+	// Extract host from apiURL
+	parsed, err := url.Parse(apiURL)
+	if err != nil {
+		return ""
+	}
+
+	if token, ok := authFile.SparkToken[parsed.Host]; ok {
+		return token
+	}
+
+	return ""
+}
+
 // runTestsCloud uploads tests to a remote API server and streams results.
 func runTestsCloud(apiURL string, tests *model.TestCollection, services *model.ServiceTemplateCollection, startTime time.Time) error {
-	token := os.Getenv("SPARK_TOKEN")
+	token := resolveCloudToken(apiURL)
 	client := cloud.NewClient(apiURL, token)
 
 	// Health check
