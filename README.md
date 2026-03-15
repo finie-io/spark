@@ -4,14 +4,6 @@
 
 ## CLI
 
-```bash
-# Install
-curl -fsSL https://raw.githubusercontent.com/finie-io/spark/main/install.sh | sh
-
-# Run tests
-spark run ./tests
-```
-
 - **Just YAML** — no SDKs, no test frameworks, no glue code
 - **Full isolation** — every test gets its own Docker network
 - **Parallel by default** — tests run concurrently out of the box
@@ -21,7 +13,7 @@ spark run ./tests
 
 Docker is required for local use. Cloud mode (`--cloud`) runs tests on a remote server and does not require Docker locally.
 
-**[Getting started](https://spark.finie.io/getting-started)** · **[Documentation](https://spark.finie.io/)**
+**[Getting started](https://spark.finie.io/getting-started)** · **[About](https://spark.finie.io/)**
 
 ## JetBrains Plugin
 
